@@ -85,6 +85,8 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     
 }
 static int fdb_open(const char *path, struct fuse_file_info *fi) {
+ 
+ 
  return 0;
 }
 
@@ -139,37 +141,14 @@ int db_write(const char* key, const leveldb::Slice value) {
 
 static int db_read(const char* key, string *read_buffer) {
 
-//   leveldb::DB* fuse_db1;
-  //leveldb::Options options;
-  //leveldb::Status status;
- //status = leveldb::DB::Open(options, "/tmp/fdb", &fuse_db1);
-  // struct stat stbuf;
-
 
    log_write("Entered db_read with key: %s\n", key);
 
-   //string read_buffer;
    leveldb::Status s = fuse_db->Get(leveldb::ReadOptions(), key, read_buffer);
-   //memcpy(&stbuf, read_buffer.data(), sizeof(read_buffer.data()));
-   //memcpy(&later_pbuf, read_buffer.data(), sizeof(read_buffer.data()));
-
-   //log_write("About to memcopy\n");
-   //slicebuf = (char *) malloc(sizeof(read_buffer.data()));
-   //memcpy(slicebuf, read_buffer.data(), sizeof(read_buffer.data()));
-   
-   //istringstream iss(*read_buffer); 
-   //conv_fromByteString(iss, reinterpret_cast<unsigned char*>(&stbuf), sizeof(stbuf)); 
-   //if (stbuf.st_nlink == 1) {
-//	log_write("stbuf good from db_read\n");
- //   }
-
 
    log_write("leaving db_read\n");
 
-
-
-//   delete fuse_db1;
- if(s.ok()) 
+   if(s.ok()) 
     return 0;
    else
     return 1;
@@ -182,7 +161,6 @@ static int db_read_iter(const char *key, list<string>* rbuffers) {
   leveldb::Iterator* it = fuse_db->NewIterator(leveldb::ReadOptions());
 
   for (it->SeekToFirst(); it->Valid(); it->Next()) {
-        //log_write("Found key: %s\n", it->key().ToString().data());
 	rbuffers->push_front(it->key().ToString());
    }
 
