@@ -47,7 +47,8 @@ static int fdb_getattr(const char *path, struct stat *stbuf) {
       conv_fromByteString(iss, reinterpret_cast<unsigned char*>(&newst), sizeof(newst)); 
 	stbuf->st_mode = newst.st_mode;
 	stbuf->st_nlink = newst.st_nlink;
-        stbuf->st_size = strlen(fakepath);
+        stbuf->st_size = newst.st_size;
+        memcpy(stbuf, &newst, sizeof(newst));
     }
    
    return res;
@@ -87,14 +88,42 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     return res;
     
 }
+
+//Begin the FUSE functions
 static int fdb_open(const char *path, struct fuse_file_info *fi) {
+
+  int res = 0;
+  string tmppath = path;
+  string readbuf;
+
+  tmppath = "#" + tmppath;
+
+  log_write("Entered fdb_open\n");
+
+  res = db_read(tmppath.c_str(), &readbuf); 
+
+  if(res == 1) {
+	return -ENOENT;
+  }
  
- 
- return 0;
+  return res;
+
 }
 
 static int fdb_close() {
  return 0;
+}
+
+static int fdb_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+  
+  string tmppath = path;
+  tmppath = "^" + tmppath;
+  string write_data = buffer;
+
+  
+  db_write(tmppath.c_str(), write_data);
+
+  return write_data.size();
 }
 
 static int fdb_mkdir(const char *path, mode_t mode) {
@@ -144,11 +173,16 @@ static int fdb_create(const char *path, mode_t mode, fuse_file_info *fi) {
   string tmppath;
   struct stat stbuf;
   ostringstream oss;
+  static time_t the_time;
 
+  the_time = time(NULL);
   log_write("Entering create\n");
   stbuf.st_mode = S_IFREG | mode;
   stbuf.st_nlink = 1;
   stbuf.st_size = 2;
+  stbuf.st_atime = the_time;
+  stbuf.st_mtime = the_time;
+  stbuf.st_ctime = the_time;
 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf)); 
 
@@ -270,6 +304,7 @@ static int init_operations(fuse_operations& operations) {
 
    operations.open = fdb_open;
    operations.read = fdb_read;
+   operations.write = fdb_write;
    operations.getattr = fdb_getattr;
    operations.readdir = fdb_readdir;
    operations.mkdir = fdb_mkdir;
@@ -330,7 +365,9 @@ int main(int argc, char** argv) {
   struct stat stbuf; 
   ostringstream oss;
   string fakepathdata = "get the hose";
+  static time_t the_time;
 
+  the_time = time(NULL);
 
   options.create_if_missing = true;
  
@@ -341,24 +378,14 @@ int main(int argc, char** argv) {
  
   status = leveldb::DB::Open(options, "/tmp/fdb1", &fuse_db);
 
-  //stbuf.st_mode = S_IFDIR | 0755;
-  //stbuf.st_nlink = 2;
-  //stbuf.st_size = strlen(fakepath);
-
-  //conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
-  //db_write(rootpath, oss.str());
-
   stbuf.st_mode = S_IFREG | 0777;
   stbuf.st_nlink = 1;
   stbuf.st_size = strlen(fakepath);
+  stbuf.st_atime = the_time;
+  stbuf.st_mtime = the_time;
+  stbuf.st_ctime = the_time;
 
-  //oss.clear(); 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf)); 
-  //char b[sizeof(stbuf)];
-  //memcpy(b, &stbuf, sizeof(stbuf));   
-  //char b[sizeof(oss)];
-  //memcpy(b, &oss, sizeof(oss));   
-
 
   db_write(fakepath, oss.str());
   db_write(fakepath1, oss.str());
@@ -367,7 +394,6 @@ int main(int argc, char** argv) {
 
   std::string somereturn;
 
- 
 
  //delete fuse_db;
   init_log(); 
