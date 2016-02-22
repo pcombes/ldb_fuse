@@ -12,6 +12,7 @@ static const char *fakepath1="#/different";
 
 int db_write(const char* key, const leveldb::Slice value);
 static int db_read(const char* key, string *read_buffer);
+static int db_delete(const char* key);
 static int db_read_iter(const char *key, list<string>* rbuffers);
 static void log_write(const char *format, ...);
 bool conv_fromByteString(istream &inputstream, unsigned char *outchar, int size);

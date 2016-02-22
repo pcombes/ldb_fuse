@@ -121,6 +121,21 @@ static int fdb_mkdir(const char *path, mode_t mode) {
   return 0;
 }
 
+static int fdb_rmdir(const char *path) {
+
+  string tmppath;
+
+  log_write("Entered rmdir\n");
+ 
+  tmppath = path;
+  tmppath = "#" + tmppath;
+
+  db_delete(tmppath.c_str());
+  log_write("Leaving rmdir\n");
+
+  return 0;
+}
+  
 static int fdb_create() {
  
  return 0;
@@ -155,6 +170,19 @@ static int db_read(const char* key, string *read_buffer) {
 
 }
 
+static int db_delete(const char* key) {
+
+   log_write("Entered db_delete with key: %s\n", key);
+    
+   leveldb::Status s = fuse_db->Delete(leveldb::WriteOptions(), key);
+
+   if(s.ok())
+    return 0;
+   else
+    return 1;
+}
+
+//db_read_iter provides an iterative read to the db
 static int db_read_iter(const char *key, list<string>* rbuffers) {
 
   log_write("Entered db_read_iter\n"); 
@@ -172,6 +200,7 @@ static int db_read_iter(const char *key, list<string>* rbuffers) {
 }
 
 
+// Logging operations. Create a logfile
 static bool init_log() {
 
   FILE *log = fopen(logfile, "w");
@@ -186,6 +215,7 @@ static bool init_log() {
   return true;
 }
 
+//Write to the logfile
 static void log_write(const char *format, ...) {
 
   FILE *log = fopen(logfile, "a");
@@ -210,6 +240,7 @@ static int init_operations(fuse_operations& operations) {
    operations.getattr = fdb_getattr;
    operations.readdir = fdb_readdir;
    operations.mkdir = fdb_mkdir;
+   operations.rmdir = fdb_rmdir;
 }
 
 bool conv_toByteString(ostream &outstream, const unsigned char *inchar, int size) {
