@@ -1,6 +1,7 @@
 using namespace std;
 using std::cout;
 
+#define DATACHAR "^";
 
 static leveldb::DB* fuse_db;
 //std::string read_buffer;
