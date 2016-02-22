@@ -13,32 +13,7 @@
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
-
-using namespace std;
-using std::cout;
-
-struct patrick {
-	int somenumber;
-	int somevalue;
-	const char *somestr;
-	int somethird;
-};
-
-      
-static leveldb::DB* fuse_db;
-//std::string read_buffer;
-//file metadata will use a # and data a ^
-static const char *logfile = "/tmp/fdb.log";
-static const char *rootpath = "/";
-static const char *fakepath="#/firstfile";
-static const char *fakepath1="#/different";
-
-int db_write(const char* key, const leveldb::Slice value);
-static int db_read(const char* key, string *read_buffer);
-static int db_read_iter(const char *key, list<string>* rbuffers);
-static void log_write(const char *format, ...);
-bool conv_fromByteString(istream &inputstream, unsigned char *outchar, int size);
-bool conv_toByteString(ostream &outstream, const unsigned char *inchar, int size);
+#include "fdb_fuse.h"
 
 
 static int fdb_getattr(const char *path, struct stat *stbuf) {
@@ -61,7 +36,6 @@ static int fdb_getattr(const char *path, struct stat *stbuf) {
 		return res;
 	} 
     else {
-      //log_write("Calling db_read with path: %s \n", path);
       string tmppath = path;
       tmppath = "#" + tmppath;
       log_write("Calling db_read with path: %s \n", tmppath.c_str());
@@ -88,7 +62,7 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     list<string> rbuffers;
     list<string>::iterator it;
 
-    log_write("Entered fdb_readdir with path: %s anything\n", path);
+    log_write("Entered fdb_readdir with path: %s \n", path);
 
     if (strcmp(path, "/") != 0)
        return -ENOENT;
