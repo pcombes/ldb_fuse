@@ -45,9 +45,9 @@ static int fdb_getattr(const char *path, struct stat *stbuf) {
       }
       istringstream iss(read_buffer); 
       conv_fromByteString(iss, reinterpret_cast<unsigned char*>(&newst), sizeof(newst)); 
-	stbuf->st_mode = newst.st_mode;
-	stbuf->st_nlink = newst.st_nlink;
-        stbuf->st_size = newst.st_size;
+//	stbuf->st_mode = newst.st_mode;
+//	stbuf->st_nlink = newst.st_nlink;
+ //       stbuf->st_size = newst.st_size;
         memcpy(stbuf, &newst, sizeof(newst));
     }
    
@@ -95,6 +95,7 @@ static int fdb_open(const char *path, struct fuse_file_info *fi) {
   int res = 0;
   string tmppath = path;
   string readbuf;
+  struct stat stbuf;
 
   tmppath = "#" + tmppath;
 
@@ -103,8 +104,13 @@ static int fdb_open(const char *path, struct fuse_file_info *fi) {
   res = db_read(tmppath.c_str(), &readbuf); 
 
   if(res == 1) {
+	log_write("fdb_open returns no entry\n");
 	return -ENOENT;
   }
+
+  istringstream iss(readbuf); 
+  conv_fromByteString(iss, reinterpret_cast<unsigned char*>(&stbuf), sizeof(stbuf)); 
+  fi->fh = stbuf.st_size;
  
   return res;
 
@@ -117,11 +123,31 @@ static int fdb_close() {
 static int fdb_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
   
   string tmppath = path;
+  string metapath = path;
   tmppath = "^" + tmppath;
-  string write_data = buffer;
+  metapath = "#" + metapath;
 
-  
-  db_write(tmppath.c_str(), write_data);
+  string write_data = buffer;
+  string emptybuf;
+  string tmpbuf;
+
+  log_write("Entered fdb_write for path: %s\n", path);
+
+  if((db_read(tmppath.c_str(), &tmpbuf)) == 1) {
+	log_write("no such path %s\n", metapath.c_str());
+	return -ENOENT;
+   }
+
+  if((db_delete(tmppath.c_str())) == 1) {
+	log_write("fdb_write Didn't delete\n");
+	return -ENOENT;
+  }
+
+  tmpbuf.insert(offset, write_data);
+  log_write("Writing to %s\n", tmppath.c_str());
+  log_write("With data: %s\n", tmpbuf.c_str());
+
+  db_write(tmppath.c_str(), tmpbuf);
 
   return write_data.size();
 }
@@ -171,9 +197,11 @@ static int fdb_rmdir(const char *path) {
 static int fdb_create(const char *path, mode_t mode, fuse_file_info *fi) {
 
   string tmppath;
+  string datapath;
   struct stat stbuf;
   ostringstream oss;
   static time_t the_time;
+  string nonsense = "";
 
   the_time = time(NULL);
   log_write("Entering create\n");
@@ -188,8 +216,12 @@ static int fdb_create(const char *path, mode_t mode, fuse_file_info *fi) {
 
   tmppath = path;
   tmppath = "#" + tmppath;
+
+  datapath = path;
+  datapath = "^" + datapath;
  
   db_write(tmppath.c_str(), oss.str()); 
+  db_write(datapath.c_str(), nonsense.c_str()); 
 
   return 0;
 }
