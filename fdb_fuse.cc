@@ -61,6 +61,7 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     char *data;
     list<string> rbuffers;
     list<string>::iterator it;
+    string tmppath;
 
     log_write("Entered fdb_readdir with path: %s \n", path);
 
@@ -70,7 +71,9 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     fill(buffer, ".", NULL, 0);
     fill(buffer, "..", NULL, 0);
 
-    db_read_iter(path, &rbuffers);
+    tmppath = path;
+    tmppath = "#" + tmppath;
+    db_read_iter(tmppath.c_str(), &rbuffers);
     for (it=rbuffers.begin(); it != rbuffers.end(); ++it) {
         read_buffer = *it;
         read_buffer.erase(read_buffer.begin());
@@ -102,7 +105,7 @@ static int fdb_mkdir(const char *path, mode_t mode) {
 
   log_write("Entered mkdir for path: %s\n", path);
 
-  stbuf.st_mode = S_IFDIR | 0404;
+  stbuf.st_mode = S_IFDIR | 0777;
   stbuf.st_nlink = 2;
   stbuf.st_size = strlen(fakepath);
 
@@ -136,13 +139,42 @@ static int fdb_rmdir(const char *path) {
   return 0;
 }
   
-static int fdb_create() {
+static int fdb_create(const char *path, mode_t mode, fuse_file_info *fi) {
+
+  string tmppath;
+  struct stat stbuf;
+  ostringstream oss;
+
+  log_write("Entering create\n");
+  stbuf.st_mode = S_IFREG | mode;
+  stbuf.st_nlink = 1;
+  stbuf.st_size = 2;
+
+  conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf)); 
+
+  tmppath = path;
+  tmppath = "#" + tmppath;
  
- return 0;
+  db_write(tmppath.c_str(), oss.str()); 
+
+  return 0;
 }
 
 static int fdb_read(const char *path, char *buffer, size_t length, off_t offset, struct fuse_file_info *fi) {
- return 0;
+
+  string tmppath;
+  string read_buffer;
+
+  log_write("Entered fdb_read\n");
+  
+  tmppath=path;
+  tmppath = "^" + tmppath;
+  
+  db_read(tmppath.c_str(), &read_buffer);
+
+  memcpy(buffer, read_buffer.data(), read_buffer.size()); 
+
+  return read_buffer.size();
 }
 
 int db_write(const char* key, const leveldb::Slice value) {
@@ -155,7 +187,6 @@ int db_write(const char* key, const leveldb::Slice value) {
 }
 
 static int db_read(const char* key, string *read_buffer) {
-
 
    log_write("Entered db_read with key: %s\n", key);
 
@@ -185,10 +216,12 @@ static int db_delete(const char* key) {
 //db_read_iter provides an iterative read to the db
 static int db_read_iter(const char *key, list<string>* rbuffers) {
 
-  log_write("Entered db_read_iter\n"); 
+  const char *limiter="^";
+
+  log_write("Entered db_read_iter with key: %s\n", key); 
   leveldb::Iterator* it = fuse_db->NewIterator(leveldb::ReadOptions());
 
-  for (it->SeekToFirst(); it->Valid(); it->Next()) {
+  for (it->Seek(key); it->Valid() && it->key().ToString() < limiter; it->Next()) {
 	rbuffers->push_front(it->key().ToString());
    }
 
@@ -241,6 +274,7 @@ static int init_operations(fuse_operations& operations) {
    operations.readdir = fdb_readdir;
    operations.mkdir = fdb_mkdir;
    operations.rmdir = fdb_rmdir;
+   operations.create = fdb_create;
 }
 
 bool conv_toByteString(ostream &outstream, const unsigned char *inchar, int size) {
@@ -295,6 +329,7 @@ int main(int argc, char** argv) {
   static fuse_operations operations;
   struct stat stbuf; 
   ostringstream oss;
+  string fakepathdata = "get the hose";
 
 
   options.create_if_missing = true;
@@ -306,29 +341,35 @@ int main(int argc, char** argv) {
  
   status = leveldb::DB::Open(options, "/tmp/fdb1", &fuse_db);
 
-  stbuf.st_mode = S_IFREG | 0444;
+  //stbuf.st_mode = S_IFDIR | 0755;
+  //stbuf.st_nlink = 2;
+  //stbuf.st_size = strlen(fakepath);
+
+  //conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
+  //db_write(rootpath, oss.str());
+
+  stbuf.st_mode = S_IFREG | 0777;
   stbuf.st_nlink = 1;
   stbuf.st_size = strlen(fakepath);
- 
+
+  //oss.clear(); 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf)); 
   //char b[sizeof(stbuf)];
   //memcpy(b, &stbuf, sizeof(stbuf));   
-  char b[sizeof(oss)];
-  memcpy(b, &oss, sizeof(oss));   
+  //char b[sizeof(oss)];
+  //memcpy(b, &oss, sizeof(oss));   
 
 
   db_write(fakepath, oss.str());
   db_write(fakepath1, oss.str());
-  //db_write("0firstfile", oss);
 
+  db_write(fakedata, fakepathdata);
 
   std::string somereturn;
-// db_read("/my/path", &sombuf);
 
  
 
  //delete fuse_db;
- //
   init_log(); 
   init_operations(operations);
   log_write("Operations initialized\n"); 

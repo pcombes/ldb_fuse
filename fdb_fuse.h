@@ -2,14 +2,16 @@ using namespace std;
 using std::cout;
 
 #define DATACHAR "^";
+#define MDCHAR "#";
 
 static leveldb::DB* fuse_db;
 //std::string read_buffer;
 //file metadata will use a # and data a ^
 static const char *logfile = "/tmp/fdb.log";
-static const char *rootpath = "/";
+static const char *rootpath = "#/";
 static const char *fakepath="#/firstfile";
 static const char *fakepath1="#/different";
+static const char *fakedata="^/firstfile";
 
 int db_write(const char* key, const leveldb::Slice value);
 static int db_read(const char* key, string *read_buffer);
