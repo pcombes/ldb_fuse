@@ -1,6 +1,6 @@
 #define FUSE_USE_VERSION 26
 
-#include <stdio.h>
+
 #include <string>
 #include <iostream>
 #include <fuse.h>
@@ -14,6 +14,16 @@
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
 #include "fdb_fuse.h"
+
+int FDBDir::db_open() {
+
+  leveldb::Options options;
+  leveldb::Status status;
+
+  options.create_if_missing = true;
+
+  status = leveldb::DB::Open(options, dbdir, &mydirdb);
+}
 
 
 static int fdb_getattr(const char *path, struct stat *stbuf) {
@@ -63,11 +73,30 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     list<string> rbuffers;
     list<string>::iterator it;
     string tmppath;
+    string newdir;
+    string dirname;
 
     log_write("Entered fdb_readdir with path: %s \n", path);
 
-    if (strcmp(path, "/") != 0)
-       return -ENOENT;
+    //if (strcmp(path, "/") != 0)
+    //   return -ENOENT;
+
+   //Let's see if we have it open in the list
+   while(strcmp(path, Dirs.front()->mydir.c_str()) != 0) {
+     if(Dirs.size() > 1)
+      Dirs.pop_front();
+     else {
+      //We're at the root dir and need to create a new dir
+      newdir = path;
+      newdir.erase(newdir.begin());
+      newdir = dbroot + newdir;
+      dirname = path;
+      dirname.erase(dirname.begin());
+      Dirs.push_front(new FDBDir(newdir.c_str(), dirname.c_str()));
+      Dirs.front()->db_open();  
+      break;
+     }
+   }
 
     fill(buffer, ".", NULL, 0);
     fill(buffer, "..", NULL, 0);
@@ -75,12 +104,18 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     tmppath = path;
     tmppath = "#" + tmppath;
     db_read_iter(tmppath.c_str(), &rbuffers);
-    for (it=rbuffers.begin(); it != rbuffers.end(); ++it) {
+    if(rbuffers.size() > 0) {
+     log_write("rbuffer size: %d\n", rbuffers.size());
+     for (it=rbuffers.begin(); it != rbuffers.end(); ++it) {
         read_buffer = *it;
         read_buffer.erase(read_buffer.begin());
         read_buffer.erase(read_buffer.begin());
 	log_write("Got this back from iter: %s\n", read_buffer.c_str());
     	fill(buffer, read_buffer.c_str(), NULL, 0);
+     }
+    }
+    else {
+     log_write("Empty dir\n");
     }
 
 
@@ -157,12 +192,18 @@ static int fdb_mkdir(const char *path, mode_t mode) {
   struct stat stbuf;
   ostringstream oss;
   string tmppath;
+  static time_t the_time;
+
+  the_time = time(NULL);
 
   log_write("Entered mkdir for path: %s\n", path);
 
   stbuf.st_mode = S_IFDIR | 0777;
   stbuf.st_nlink = 2;
   stbuf.st_size = strlen(fakepath);
+  stbuf.st_atime = the_time;
+  stbuf.st_ctime = the_time;
+  stbuf.st_mtime = the_time;
 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
   char b[sizeof(oss)];
@@ -174,6 +215,7 @@ static int fdb_mkdir(const char *path, mode_t mode) {
   log_write("Writing %s\n", tmppath.c_str());
 
   db_write(tmppath.c_str(), oss.str());
+
   log_write("Leaving mkdir\n");  
   
   return 0;
@@ -243,9 +285,28 @@ static int fdb_read(const char *path, char *buffer, size_t length, off_t offset,
   return read_buffer.size();
 }
 
+static int fdb_opendir(const char *dir, mode_t mode, struct fuse_file_info *fi) {
+
+  log_write("Entered fdb_opendir\n"); 
+  Dirs.push_front(new FDBDir(dir, dir));
+  Dirs.front()->db_open(); 
+  log_write("Left fdb_opendir\n");
+}
+
 int db_write(const char* key, const leveldb::Slice value) {
 
-   leveldb::Status s = fuse_db->Put(leveldb::WriteOptions(), key, value);
+   //leveldb::Status s = fuse_db->Put(leveldb::WriteOptions(), key, value);
+   //New way
+   Dirs.front()->db_write(key, value);
+   //if(s.ok()) 
+   //return 0;
+   //else
+   // return 1;
+}
+
+int FDBDir::db_write(const char* key, const leveldb::Slice value) {
+
+   leveldb::Status s = mydirdb->Put(leveldb::WriteOptions(), key, value);
    if(s.ok()) 
     return 0;
    else
@@ -254,46 +315,77 @@ int db_write(const char* key, const leveldb::Slice value) {
 
 static int db_read(const char* key, string *read_buffer) {
 
-   log_write("Entered db_read with key: %s\n", key);
+  // log_write("Entered db_read with key: %s\n", key);
 
-   leveldb::Status s = fuse_db->Get(leveldb::ReadOptions(), key, read_buffer);
+   //leveldb::Status s = fuse_db->Get(leveldb::ReadOptions(), key, read_buffer);
+   //New way
+   Dirs.front()->db_read(key, read_buffer);
+}
 
-   log_write("leaving db_read\n");
+int FDBDir::db_read(const char* key, string *read_buffer) {
+
+  // log_write("Entered db_read with key: %s\n", key);
+
+   leveldb::Status s = mydirdb->Get(leveldb::ReadOptions(), key, read_buffer);
+
+   //log_write("leaving db_read\n");
 
    if(s.ok()) 
     return 0;
    else
     return 1;
-
 }
 
 static int db_delete(const char* key) {
 
    log_write("Entered db_delete with key: %s\n", key);
-    
-   leveldb::Status s = fuse_db->Delete(leveldb::WriteOptions(), key);
+   
+   //Old way 
+   //leveldb::Status s = fuse_db->Delete(leveldb::WriteOptions(), key);
+   //New way
+   Dirs.front()->db_delete(key);
 
+   //if(s.ok())
+    //return 0;
+   //else
+   // return 1;
+}
+
+int FDBDir::db_delete(const char *key) {
+   leveldb::Status s = mydirdb->Delete(leveldb::WriteOptions(), key);
+ 
    if(s.ok())
     return 0;
    else
     return 1;
 }
-
-//db_read_iter provides an iterative read to the db
-static int db_read_iter(const char *key, list<string>* rbuffers) {
+  
+int FDBDir::db_read_iter(const char *key, list<string>* rbuffers) {
 
   const char *limiter="^";
 
-  log_write("Entered db_read_iter with key: %s\n", key); 
-  leveldb::Iterator* it = fuse_db->NewIterator(leveldb::ReadOptions());
+  leveldb::Iterator* it = mydirdb->NewIterator(leveldb::ReadOptions());
 
   for (it->Seek(key); it->Valid() && it->key().ToString() < limiter; it->Next()) {
-	rbuffers->push_front(it->key().ToString());
+        rbuffers->push_front(it->key().ToString());
    }
 
   assert(it->status().ok());
   delete it;
-   
+
+  return 0;
+}
+ 
+//provides an iterative read to the db
+static int db_read_iter(const char *key, list<string>* rbuffers) {
+
+
+  log_write("Entered db_read_iter with key: %s\n", key); 
+ 
+  log_write("CWD is thought to be %s\n", Dirs.front()->mydir.c_str());
+ 
+  Dirs.front()->db_read_iter(key, rbuffers);
+ 
   log_write("Leaving db_read_iter\n"); 
   return 0; 
 }
@@ -342,6 +434,7 @@ static int init_operations(fuse_operations& operations) {
    operations.mkdir = fdb_mkdir;
    operations.rmdir = fdb_rmdir;
    operations.create = fdb_create;
+   operations.create = fdb_opendir;
 }
 
 bool conv_toByteString(ostream &outstream, const unsigned char *inchar, int size) {
@@ -391,8 +484,8 @@ bool conv_fromByteString(istream &inputstream, unsigned char *outchar, int size)
 
 int main(int argc, char** argv) {
 
-  leveldb::Options options;
-  leveldb::Status status;
+  //leveldb::Options options;
+  //leveldb::Status status;
   static fuse_operations operations;
   struct stat stbuf; 
   ostringstream oss;
@@ -401,14 +494,17 @@ int main(int argc, char** argv) {
 
   the_time = time(NULL);
 
-  options.create_if_missing = true;
+ // options.create_if_missing = true;
  
   if(argc > 20){
    printf("Usage: %s <path to LevelDB>\n", argv[0]);
    return 1;
   }
  
-  status = leveldb::DB::Open(options, "/tmp/fdb1", &fuse_db);
+//  status = leveldb::DB::Open(options, "/tmp/fdb1", &fuse_db);
+
+  Dirs.push_front(new FDBDir("/tmp/fdb1", "/"));
+  Dirs.front()->db_open();
 
   stbuf.st_mode = S_IFREG | 0777;
   stbuf.st_nlink = 1;
