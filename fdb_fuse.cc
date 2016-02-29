@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <list>
 #include <iosfwd>
+#include <unordered_map>
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
@@ -55,10 +56,7 @@ static int fdb_getattr(const char *path, struct stat *stbuf) {
       }
       istringstream iss(read_buffer); 
       conv_fromByteString(iss, reinterpret_cast<unsigned char*>(&newst), sizeof(newst)); 
-//	stbuf->st_mode = newst.st_mode;
-//	stbuf->st_nlink = newst.st_nlink;
- //       stbuf->st_size = newst.st_size;
-        memcpy(stbuf, &newst, sizeof(newst));
+      memcpy(stbuf, &newst, sizeof(newst));
     }
    
    return res;
@@ -81,22 +79,17 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     //if (strcmp(path, "/") != 0)
     //   return -ENOENT;
 
-   //Let's see if we have it open in the list
-   while(strcmp(path, Dirs.front()->mydir.c_str()) != 0) {
-     if(Dirs.size() > 1)
-      Dirs.pop_front();
-     else {
-      //We're at the root dir and need to create a new dir
+   if(dirmap.find(path) == dirmap.end()) {
+      log_write("Creating a new class for %s\n", path);
       newdir = path;
       newdir.erase(newdir.begin());
       newdir = dbroot + newdir;
       dirname = path;
-      dirname.erase(dirname.begin());
-      Dirs.push_front(new FDBDir(newdir.c_str(), dirname.c_str()));
-      Dirs.front()->db_open();  
-      break;
+      dirmap[path] = new FDBDir(newdir.c_str(), dirname.c_str());
+      dirmap[path]->db_open();  
      }
-   }
+
+    cwd = dirmap[path];
 
     fill(buffer, ".", NULL, 0);
     fill(buffer, "..", NULL, 0);
@@ -104,13 +97,21 @@ static int fdb_readdir(const char *path, void *buffer, fuse_fill_dir_t fill, off
     tmppath = path;
     tmppath = "#" + tmppath;
     db_read_iter(tmppath.c_str(), &rbuffers);
+    tmppath.erase(tmppath.begin());
+    tmppath.erase(tmppath.begin());
+    log_write("rbuffer size: %d\n", rbuffers.size());
     if(rbuffers.size() > 0) {
-     log_write("rbuffer size: %d\n", rbuffers.size());
-     for (it=rbuffers.begin(); it != rbuffers.end(); ++it) {
-        read_buffer = *it;
+     for (string read_buffer : rbuffers) {
         read_buffer.erase(read_buffer.begin());
         read_buffer.erase(read_buffer.begin());
 	log_write("Got this back from iter: %s\n", read_buffer.c_str());
+        //remove the leading path stuff
+        tmppath = tmppath + "/";
+        string::size_type i = read_buffer.find(tmppath);
+        if(i != string::npos) {
+         read_buffer.erase(i, tmppath.length());
+        }
+        log_write("Filling buffer with %s\n", read_buffer.c_str());
     	fill(buffer, read_buffer.c_str(), NULL, 0);
      }
     }
@@ -156,7 +157,9 @@ static int fdb_close() {
 }
 
 static int fdb_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
-  
+
+  struct stat stbuf;  
+  static time_t the_time;
   string tmppath = path;
   string metapath = path;
   tmppath = "^" + tmppath;
@@ -165,8 +168,12 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
   string write_data = buffer;
   string emptybuf;
   string tmpbuf;
+  ostringstream oss;
 
   log_write("Entered fdb_write for path: %s\n", path);
+
+  //Get the old attributes
+  fdb_getattr(path, &stbuf);
 
   if((db_read(tmppath.c_str(), &tmpbuf)) == 1) {
 	log_write("no such path %s\n", metapath.c_str());
@@ -184,6 +191,18 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
 
   db_write(tmppath.c_str(), tmpbuf);
 
+ //Update stbuf
+  the_time = time(NULL);
+  stbuf.st_mtime = the_time;
+  stbuf.st_size = write_data.size() + stbuf.st_size;
+
+  conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
+  char b[sizeof(oss)];
+  memcpy(b, &oss, sizeof(oss)); 
+
+  db_delete(metapath.c_str());
+  db_write(metapath.c_str(), oss.str());
+
   return write_data.size();
 }
 
@@ -192,6 +211,7 @@ static int fdb_mkdir(const char *path, mode_t mode) {
   struct stat stbuf;
   ostringstream oss;
   string tmppath;
+  string fspath = "/tmp";
   static time_t the_time;
 
   the_time = time(NULL);
@@ -200,7 +220,7 @@ static int fdb_mkdir(const char *path, mode_t mode) {
 
   stbuf.st_mode = S_IFDIR | 0777;
   stbuf.st_nlink = 2;
-  stbuf.st_size = strlen(fakepath);
+  stbuf.st_size = 4096;
   stbuf.st_atime = the_time;
   stbuf.st_ctime = the_time;
   stbuf.st_mtime = the_time;
@@ -216,6 +236,11 @@ static int fdb_mkdir(const char *path, mode_t mode) {
 
   db_write(tmppath.c_str(), oss.str());
 
+  log_write("Creating class and ldb (if it doesn't exist) for key %s\n", path);
+  fspath = fspath + path;
+  dirmap[path] = new FDBDir(fspath.c_str(), path);
+  dirmap[path]->db_open();
+ 
   log_write("Leaving mkdir\n");  
   
   return 0;
@@ -246,7 +271,7 @@ static int fdb_create(const char *path, mode_t mode, fuse_file_info *fi) {
   string nonsense = "";
 
   the_time = time(NULL);
-  log_write("Entering create\n");
+  log_write("Entering create for %s\n", path);
   stbuf.st_mode = S_IFREG | mode;
   stbuf.st_nlink = 1;
   stbuf.st_size = 2;
@@ -285,23 +310,25 @@ static int fdb_read(const char *path, char *buffer, size_t length, off_t offset,
   return read_buffer.size();
 }
 
-static int fdb_opendir(const char *dir, mode_t mode, struct fuse_file_info *fi) {
+static int fdb_opendir(const char *dir, struct fuse_file_info *fi) {
 
-  log_write("Entered fdb_opendir\n"); 
-  Dirs.push_front(new FDBDir(dir, dir));
-  Dirs.front()->db_open(); 
+  log_write("Entered fdb_opendir for dir %s\n", dir); 
+
+ if(dirmap.find(dir) == dirmap.end()) {
+   log_write("Opendir didn't have entry for %s\n", dir);
+   string fsdir = dir;
+   fsdir = dbroot + fsdir;
+   dirmap[dir] = new FDBDir(fsdir.c_str(),dir);
+   dirmap[dir]->db_open();
+   cwd = dirmap[dir];
+  }
+
   log_write("Left fdb_opendir\n");
 }
 
 int db_write(const char* key, const leveldb::Slice value) {
 
-   //leveldb::Status s = fuse_db->Put(leveldb::WriteOptions(), key, value);
-   //New way
-   Dirs.front()->db_write(key, value);
-   //if(s.ok()) 
-   //return 0;
-   //else
-   // return 1;
+   cwd->db_write(key, value);
 }
 
 int FDBDir::db_write(const char* key, const leveldb::Slice value) {
@@ -319,7 +346,7 @@ static int db_read(const char* key, string *read_buffer) {
 
    //leveldb::Status s = fuse_db->Get(leveldb::ReadOptions(), key, read_buffer);
    //New way
-   Dirs.front()->db_read(key, read_buffer);
+   cwd->db_read(key, read_buffer);
 }
 
 int FDBDir::db_read(const char* key, string *read_buffer) {
@@ -343,7 +370,7 @@ static int db_delete(const char* key) {
    //Old way 
    //leveldb::Status s = fuse_db->Delete(leveldb::WriteOptions(), key);
    //New way
-   Dirs.front()->db_delete(key);
+   cwd->db_delete(key);
 
    //if(s.ok())
     //return 0;
@@ -364,12 +391,19 @@ int FDBDir::db_read_iter(const char *key, list<string>* rbuffers) {
 
   const char *limiter="^";
 
-  leveldb::Iterator* it = mydirdb->NewIterator(leveldb::ReadOptions());
+  if(mydirdb == NULL) {
+   log_write("Empty mydirdb\n");
+   return 1;
+  }
 
+  log_write("Entered class iter\n");
+  leveldb::Iterator* it = mydirdb->NewIterator(leveldb::ReadOptions());
+  log_write("Created iter\n");
   for (it->Seek(key); it->Valid() && it->key().ToString() < limiter; it->Next()) {
         rbuffers->push_front(it->key().ToString());
    }
 
+  log_write("Exited for loop\n");
   assert(it->status().ok());
   delete it;
 
@@ -382,9 +416,9 @@ static int db_read_iter(const char *key, list<string>* rbuffers) {
 
   log_write("Entered db_read_iter with key: %s\n", key); 
  
-  log_write("CWD is thought to be %s\n", Dirs.front()->mydir.c_str());
+  log_write("CWD is thought to be %s\n", cwd->mydir.c_str());
  
-  Dirs.front()->db_read_iter(key, rbuffers);
+  cwd->db_read_iter(key, rbuffers);
  
   log_write("Leaving db_read_iter\n"); 
   return 0; 
@@ -434,7 +468,7 @@ static int init_operations(fuse_operations& operations) {
    operations.mkdir = fdb_mkdir;
    operations.rmdir = fdb_rmdir;
    operations.create = fdb_create;
-   operations.create = fdb_opendir;
+   operations.opendir = fdb_opendir;
 }
 
 bool conv_toByteString(ostream &outstream, const unsigned char *inchar, int size) {
@@ -484,8 +518,6 @@ bool conv_fromByteString(istream &inputstream, unsigned char *outchar, int size)
 
 int main(int argc, char** argv) {
 
-  //leveldb::Options options;
-  //leveldb::Status status;
   static fuse_operations operations;
   struct stat stbuf; 
   ostringstream oss;
@@ -494,17 +526,16 @@ int main(int argc, char** argv) {
 
   the_time = time(NULL);
 
- // options.create_if_missing = true;
  
   if(argc > 20){
    printf("Usage: %s <path to LevelDB>\n", argv[0]);
    return 1;
   }
- 
-//  status = leveldb::DB::Open(options, "/tmp/fdb1", &fuse_db);
 
-  Dirs.push_front(new FDBDir("/tmp/fdb1", "/"));
-  Dirs.front()->db_open();
+  dirmap["/"] = new FDBDir("/tmp/fdb1", "/");
+  dirmap["/"]->db_open();
+
+  cwd = dirmap["/"];
 
   stbuf.st_mode = S_IFREG | 0777;
   stbuf.st_nlink = 1;
@@ -517,13 +548,10 @@ int main(int argc, char** argv) {
 
   db_write(fakepath, oss.str());
   db_write(fakepath1, oss.str());
-
   db_write(fakedata, fakepathdata);
 
   std::string somereturn;
 
-
- //delete fuse_db;
   init_log(); 
   init_operations(operations);
   log_write("Operations initialized\n"); 

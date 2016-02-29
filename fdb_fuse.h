@@ -10,7 +10,7 @@ static leveldb::DB* fuse_db;
 //file metadata will use a # and data a ^
 static const char *logfile = "/tmp/fdb.log";
 static const char *rootpath = "#/";
-static const char *dbroot = "/tmp/";
+static const char *dbroot = "/tmp";
 static const char *fakepath="#/firstfile";
 static const char *fakepath1="#/different";
 static const char *fakedata="^/firstfile";
@@ -40,4 +40,7 @@ class FDBDir {
    int delete_db();
 };
 
-list<FDBDir *> Dirs;
+FDBDir* cwd;
+unordered_map<string, FDBDir* > dirmap;
+unordered_map<string , int> stringmap;
+

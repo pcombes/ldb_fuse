@@ -3,7 +3,7 @@ LEVELDB=/home/dumb/src/leveldb
 INCLUDE += $(LEVELDB)/include
 LIBRARIES += $(LEVELDB)/out-shared
 LINK=-lleveldb -lfuse
-CXXFLAGS += -I $(INCLUDE) -L $(LIBRARIES) $(LINK) -D_FILE_OFFSET_BITS=64 -std=c++11
+CXXFLAGS += -I $(INCLUDE) -L $(LIBRARIES) $(LINK) -D_FILE_OFFSET_BITS=64 -std=c++11 -g
 
 $(SOURCES:.cc=.o)
 
