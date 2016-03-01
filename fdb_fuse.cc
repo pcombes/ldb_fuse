@@ -153,6 +153,7 @@ static int fdb_open(const char *path, struct fuse_file_info *fi) {
 
   
   fi->fh = stbuf.st_size;
+  fi->nonseekable = 1;
 
   log_write("Left fdb_open\n"); 
   return res;
@@ -216,7 +217,7 @@ static int fdb_mkdir(const char *path, mode_t mode) {
   struct stat stbuf;
   ostringstream oss;
   string tmppath;
-  string fspath = "/tmp";
+  string fspath = dbroot;
   static time_t the_time;
 
   the_time = time(NULL);
@@ -289,7 +290,7 @@ static int fdb_update_metadata(const char *path, struct stat* stbuf) {
 
   log_write("Updating metadata for %s\n", path);
 
-  conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
+  conv_toByteString(oss, reinterpret_cast<const unsigned char*>(stbuf), sizeof(stbuf));
 
   tmppath = path;
   tmppath = "#" + tmppath; 
@@ -579,6 +580,7 @@ int main(int argc, char** argv) {
   ostringstream oss;
   string fakepathdata = "get the hose";
   static time_t the_time;
+  string rootdb = dbroot;
 
   the_time = time(NULL);
 
@@ -588,7 +590,8 @@ int main(int argc, char** argv) {
    return 1;
   }
 
-  dirmap["/"] = new FDBDir("/tmp/fdb1", "/");
+  rootdb = rootdb + "/fdb1";
+  dirmap["/"] = new FDBDir(rootdb.c_str(), "/");
   dirmap["/"]->db_open();
 
   cwd = dirmap["/"];
