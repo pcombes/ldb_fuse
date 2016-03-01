@@ -16,12 +16,14 @@ static const char *fakepath1="#/different";
 static const char *fakedata="^/firstfile";
 
 int db_write(const char* key, const leveldb::Slice value);
+int db_write_batch(leveldb::WriteBatch *batch);
 static int db_read(const char* key, string *read_buffer);
 static int db_delete(const char* key);
 static int db_read_iter(const char *key, list<string>* rbuffers);
 static void log_write(const char *format, ...);
 bool conv_fromByteString(istream &inputstream, unsigned char *outchar, int size);
 bool conv_toByteString(ostream &outstream, const unsigned char *inchar, int size);
+static int fdb_update_metadata(const char *path, struct stat* stbuf);
 
 class FDBDir {
    leveldb::DB* mydirdb;
@@ -37,6 +39,7 @@ class FDBDir {
    int db_read(const char* key, string *read_buffer);
    int db_delete(const char* key);
    int db_read_iter(const char *key, list<string>* rbuffers);
+   int db_write_batch(leveldb::WriteBatch *batch);
    int delete_db();
 };
 

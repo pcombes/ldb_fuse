@@ -6,6 +6,8 @@
 #include <fuse.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
 #include <sstream>
 #include <iomanip>
 #include <list>
@@ -14,6 +16,7 @@
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
+#include "leveldb/write_batch.h"
 #include "fdb_fuse.h"
 
 int FDBDir::db_open() {
@@ -135,7 +138,7 @@ static int fdb_open(const char *path, struct fuse_file_info *fi) {
 
   tmppath = "#" + tmppath;
 
-  log_write("Entered fdb_open\n");
+  log_write("Entered fdb_open for %s\n", path);
 
   res = db_read(tmppath.c_str(), &readbuf); 
 
@@ -146,8 +149,12 @@ static int fdb_open(const char *path, struct fuse_file_info *fi) {
 
   istringstream iss(readbuf); 
   conv_fromByteString(iss, reinterpret_cast<unsigned char*>(&stbuf), sizeof(stbuf)); 
+  //Test for permissions
+
+  
   fi->fh = stbuf.st_size;
- 
+
+  log_write("Left fdb_open\n"); 
   return res;
 
 }
@@ -197,8 +204,6 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
   stbuf.st_size = write_data.size() + stbuf.st_size;
 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
-  char b[sizeof(oss)];
-  memcpy(b, &oss, sizeof(oss)); 
 
   db_delete(metapath.c_str());
   db_write(metapath.c_str(), oss.str());
@@ -250,7 +255,7 @@ static int fdb_rmdir(const char *path) {
 
   string tmppath;
 
-  log_write("Entered rmdir\n");
+  log_write("Entered rmdir - removing directory %s\n", path);
  
   tmppath = path;
   tmppath = "#" + tmppath;
@@ -260,7 +265,46 @@ static int fdb_rmdir(const char *path) {
 
   return 0;
 }
+
+static int fdb_chown(const char *path, uid_t uid, gid_t gid) {
+ 
+  struct stat stbuf; 
+  log_write("Entered fdb_chown for %s\n", path);
+
+  fdb_getattr(path, &stbuf);
   
+  stbuf.st_uid = uid;
+  stbuf.st_gid = gid;
+
+  return fdb_update_metadata(path, &stbuf); 
+   
+}
+ 
+static int fdb_update_metadata(const char *path, struct stat* stbuf) {
+  
+  ostringstream oss;
+  leveldb::WriteBatch batch;
+  leveldb::Status s;
+  string tmppath;
+
+  log_write("Updating metadata for %s\n", path);
+
+  conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
+
+  tmppath = path;
+  tmppath = "#" + tmppath; 
+
+  log_write("Batching for %s\n", tmppath.c_str());
+
+  batch.Delete(tmppath.c_str());
+  batch.Put(tmppath.c_str(), oss.str());
+
+  log_write("Leaving update_metadata\n");
+
+  return db_write_batch(&batch);   
+
+}
+ 
 static int fdb_create(const char *path, mode_t mode, fuse_file_info *fi) {
 
   string tmppath;
@@ -278,6 +322,8 @@ static int fdb_create(const char *path, mode_t mode, fuse_file_info *fi) {
   stbuf.st_atime = the_time;
   stbuf.st_mtime = the_time;
   stbuf.st_ctime = the_time;
+  stbuf.st_uid = getuid();
+  stbuf.st_gid = getgid();
 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf)); 
 
@@ -340,13 +386,29 @@ int FDBDir::db_write(const char* key, const leveldb::Slice value) {
     return 1;
 }
 
+int db_write_batch(leveldb::WriteBatch *batch) {
+
+ return cwd->db_write_batch(batch);
+
+}
+
+int FDBDir::db_write_batch(leveldb::WriteBatch *batch) {
+
+  leveldb::Status s = mydirdb->Write(leveldb::WriteOptions(), batch); 
+  if(s.ok())
+    return 0;
+   else
+    return 1;
+}
+
+
 static int db_read(const char* key, string *read_buffer) {
 
   // log_write("Entered db_read with key: %s\n", key);
 
    //leveldb::Status s = fuse_db->Get(leveldb::ReadOptions(), key, read_buffer);
    //New way
-   cwd->db_read(key, read_buffer);
+  return  cwd->db_read(key, read_buffer);
 }
 
 int FDBDir::db_read(const char* key, string *read_buffer) {
@@ -367,15 +429,8 @@ static int db_delete(const char* key) {
 
    log_write("Entered db_delete with key: %s\n", key);
    
-   //Old way 
-   //leveldb::Status s = fuse_db->Delete(leveldb::WriteOptions(), key);
-   //New way
-   cwd->db_delete(key);
+   return cwd->db_delete(key);
 
-   //if(s.ok())
-    //return 0;
-   //else
-   // return 1;
 }
 
 int FDBDir::db_delete(const char *key) {
@@ -469,6 +524,7 @@ static int init_operations(fuse_operations& operations) {
    operations.rmdir = fdb_rmdir;
    operations.create = fdb_create;
    operations.opendir = fdb_opendir;
+   operations.chown = fdb_chown;
 }
 
 bool conv_toByteString(ostream &outstream, const unsigned char *inchar, int size) {
@@ -543,6 +599,8 @@ int main(int argc, char** argv) {
   stbuf.st_atime = the_time;
   stbuf.st_mtime = the_time;
   stbuf.st_ctime = the_time;
+  stbuf.st_uid = getuid();
+  stbuf.st_gid = getgid();
 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf)); 
 
