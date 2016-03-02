@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <list>
 #include <iosfwd>
+#include <cstdlib>
 #include <unordered_map>
 #include "leveldb/db.h"
 #include "leveldb/env.h"
@@ -164,6 +165,21 @@ static int fdb_close() {
  return 0;
 }
 
+static int get_blocklist(const char *path, list<string> *blocklist) {
+
+  string tmppath = path;
+  string readbuf;
+
+  tmppath = "^" + tmppath;
+
+  db_read(tmppath.c_str(), &readbuf);
+
+  istringstream iss(readbuf);
+  conv_fromByteString(iss, reinterpret_cast<unsigned char*>(&stbuf), sizeof(stbuf));
+
+  return 0;
+}
+
 static int fdb_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
 
   struct stat stbuf;  
@@ -177,25 +193,22 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
   string emptybuf;
   string tmpbuf;
   ostringstream oss;
+  int i;
 
   log_write("Entered fdb_write for path: %s\n", path);
 
   //Get the old attributes
   fdb_getattr(path, &stbuf);
 
-  if((db_read(tmppath.c_str(), &tmpbuf)) == 1) {
-	log_write("no such path %s\n", metapath.c_str());
-	return -ENOENT;
-   }
-
   if((db_delete(tmppath.c_str())) == 1) {
 	log_write("fdb_write Didn't delete\n");
 	return -ENOENT;
   }
 
-  tmpbuf.insert(offset, write_data);
-  log_write("Writing to %s\n", tmppath.c_str());
-  log_write("With data: %s\n", tmpbuf.c_str());
+  div_t res = div(size,4096);
+
+  log_write("Writing %d bytes to %s with offset %d and %f number of times with leftover %f\n", size,tmppath.c_str(), offset, res.quot, res.rem);
+  //log_write("With data: %s\n", tmpbuf.c_str());
 
   db_write(tmppath.c_str(), tmpbuf);
 
@@ -581,6 +594,7 @@ int main(int argc, char** argv) {
   string fakepathdata = "get the hose";
   static time_t the_time;
   string rootdb = dbroot;
+  string read_result;
 
   the_time = time(NULL);
 
@@ -611,7 +625,10 @@ int main(int argc, char** argv) {
   db_write(fakepath1, oss.str());
   db_write(fakedata, fakepathdata);
 
-  std::string somereturn;
+  int res=db_read("^/blockcounter", &read_result);
+  if(res == 1) {
+   db_write("#/blockcounter", "1000");
+  }
 
   init_log(); 
   init_operations(operations);
