@@ -169,13 +169,17 @@ static int get_blocklist(const char *path, list<string> *blocklist) {
 
   string tmppath = path;
   string readbuf;
+  string tmp;
 
   tmppath = "^" + tmppath;
 
   db_read(tmppath.c_str(), &readbuf);
 
   istringstream iss(readbuf);
-  conv_fromByteString(iss, reinterpret_cast<unsigned char*>(&stbuf), sizeof(stbuf));
+
+  while(getline(iss, tmp, ',')) {
+   blocklist->push_back(tmp);
+  }
 
   return 0;
 }
@@ -184,15 +188,20 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
 
   struct stat stbuf;  
   static time_t the_time;
+  string newblocklist;
   string tmppath = path;
   string metapath = path;
-  tmppath = "^" + tmppath;
+  string counter;
+
   metapath = "#" + metapath;
+  list<string> blocklist;
 
   string write_data = buffer;
   string emptybuf;
   string tmpbuf;
   ostringstream oss;
+  list<string>::iterator it;
+
   int i;
 
   log_write("Entered fdb_write for path: %s\n", path);
@@ -205,13 +214,54 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
 	return -ENOENT;
   }
 
-  div_t res = div(size,4096);
+ //Get the current value of the block counter
+  dirmap["/"]->db_read("^/blockcounter", &counter);
+ //Get the current list of blocks for the file 
+  get_blocklist(path, &blocklist);
+ 
+   it = blocklist.begin();
+   i = offset/BLOCKSIZE; 
+   for(int j=0; j <= i; ++j) {
+    ++it;
+   }
 
-  log_write("Writing %d bytes to %s with offset %d and %f number of times with leftover %f\n", size,tmppath.c_str(), offset, res.quot, res.rem);
+  log_write("Writing %d bytes to %s with offset %d d \n", size,tmppath.c_str(), offset);
   //log_write("With data: %s\n", tmpbuf.c_str());
 
-  db_write(tmppath.c_str(), tmpbuf);
+ //Set tmppath to be the current value of the block counter with the data tag
+  tmppath = counter;
+  tmppath = "^/" + tmppath;
+ //Write out the block
+  db_write(tmppath.c_str(), write_data);
 
+ //Add this block to the list of data blocks
+  if(blocklist.size() == 0) {
+    blocklist.push_back(counter);
+   }
+  else {
+   blocklist.insert(it, counter);
+  } 
+
+ //Re-using tmppath
+  tmppath.clear(); 
+  tmppath = path;
+  tmppath = "^" + tmppath;
+ //Convert blocklist into a string again
+  newblocklist = blocklist.front();
+  blocklist.pop_front();
+
+  for(string block : blocklist) {
+    newblocklist = newblocklist + ","; 
+    newblocklist = newblocklist + block;
+  }
+    
+  db_write(tmppath.c_str(), newblocklist); 
+ //Increment the counter and store the new value
+  i = stoi(counter);
+  ++i;
+  counter = to_string(i);
+  dirmap["/"]->db_write("^/blockcounter", counter);
+ 
  //Update stbuf
   the_time = time(NULL);
   stbuf.st_mtime = the_time;
@@ -357,12 +407,27 @@ static int fdb_read(const char *path, char *buffer, size_t length, off_t offset,
 
   string tmppath;
   string read_buffer;
+  list<string> blocklist;
+  list<string>::iterator it;
+  int i;
 
-  log_write("Entered fdb_read\n");
-  
-  tmppath=path;
-  tmppath = "^" + tmppath;
-  
+  log_write("Entered fdb_read for %s with length %d and offset %d\n", path, length, offset);
+ 
+  //First get the blocklist data 
+  //tmppath=path;
+  //tmppath = "^" + tmppath;
+  get_blocklist(path, &blocklist);
+
+   it = blocklist.begin();
+   i = offset/BLOCKSIZE; 
+   for(int j=0; j <= i; ++j) {
+    ++it;
+   }
+
+  //tmppath = blocklist.front();
+  tmppath = *it;
+  tmppath = "^/" + tmppath;
+
   db_read(tmppath.c_str(), &read_buffer);
 
   memcpy(buffer, read_buffer.data(), read_buffer.size()); 
@@ -627,7 +692,7 @@ int main(int argc, char** argv) {
 
   int res=db_read("^/blockcounter", &read_result);
   if(res == 1) {
-   db_write("#/blockcounter", "1000");
+   db_write("^/blockcounter", "1000");
   }
 
   init_log(); 
