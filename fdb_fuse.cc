@@ -1,12 +1,11 @@
 #define FUSE_USE_VERSION 26
 
-
-#include <string>
 #include <iostream>
 #include <fuse.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <string>
 #include <sys/types.h>
 #include <sstream>
 #include <iomanip>
@@ -19,6 +18,7 @@
 #include "leveldb/slice.h"
 #include "leveldb/write_batch.h"
 #include "fdb_fuse.h"
+#include "base64.h"
 
 int FDBDir::db_open() {
 
@@ -221,24 +221,23 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
  //Get the current list of blocks for the file 
   get_blocklist(path, &blocklist);
  
- //  it = blocklist.begin();
-  // i = offset/BLOCKSIZE; 
-  // for(int j=0; j <= i; ++j) {
-  //  ++it;
-  // }
-   it = blocklist.begin();
-   i = offset/BLOCKSIZE;
-   while((j < i ) && (it != blocklist.end())) {
+  it = blocklist.begin();
+  i = offset/BLOCKSIZE;
+
+  while((j < i ) && (it != blocklist.end())) {
     log_write("Advanced iter\n");
     ++it;
     j++;
    }
+
   log_write("Writing %d bytes to %s with offset %d \n", size,tmppath.c_str(), offset);
  //Set tmppath to be the current value of the block counter with the data tag
   tmppath = counter;
   tmppath = "^/" + tmppath;
- //Write out the block
-  db_write(tmppath.c_str(), write_data);
+ //Write out the block, convert to byte string first
+  
+  string outstring = base64_encode(reinterpret_cast<const unsigned char*>(write_data.c_str()), write_data.length());  
+  db_write(tmppath.c_str(), outstring);
 
  //Add this block to the list of data blocks
   if((blocklist.size() == 0) || (it == blocklist.end())) {
@@ -246,9 +245,8 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
     blocklist.push_back(counter);
    }
   else {
-  // blocklist.insert(it, counter);
-  log_write("Replacing block %s with block %s\n", it->c_str(), counter.c_str());
-  (*it) = counter;
+   log_write("Replacing block %s with block %s\n", it->c_str(), counter.c_str());
+   (*it) = counter;
   } 
 
  //Re-using tmppath
@@ -276,7 +274,7 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
   the_time = time(NULL);
   stbuf.st_mtime = the_time;
   stbuf.st_size = size + stbuf.st_size;
-
+ 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
 
   db_delete(metapath.c_str());
@@ -417,6 +415,7 @@ static int fdb_read(const char *path, char *buffer, size_t length, off_t offset,
 
   string tmppath;
   string read_buffer;
+  string outstring;
   list<string> blocklist;
   list<string>::iterator it;
   int i;
@@ -442,10 +441,12 @@ static int fdb_read(const char *path, char *buffer, size_t length, off_t offset,
   log_write("Reading from block %s after offset %d and blocklist length %d\n", tmppath.c_str(), i, blocklist.size());
 
   db_read(tmppath.c_str(), &read_buffer);
+  
+  outstring = base64_decode(read_buffer);
 
-  memcpy(buffer, read_buffer.data(), read_buffer.size()); 
+  memcpy(buffer, outstring.data(), outstring.size()); 
 
-  return read_buffer.size();
+  return outstring.size();
 }
 
 static int fdb_opendir(const char *dir, struct fuse_file_info *fi) {
