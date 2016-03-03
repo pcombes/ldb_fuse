@@ -179,7 +179,7 @@ static int get_blocklist(const char *path, list<string> *blocklist) {
 
   while(getline(iss, tmp, ',')) {
    log_write("Adding block %s to blocklist %s\n", tmp.c_str(), path);
-   blocklist->push_front(tmp);
+   blocklist->push_back(tmp);
   }
 
   return 0;
@@ -228,7 +228,7 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
   // }
    it = blocklist.begin();
    i = offset/BLOCKSIZE;
-   while(j < (i - 1)) {
+   while((j < i ) && (it != blocklist.end())) {
     log_write("Advanced iter\n");
     ++it;
     j++;
@@ -241,11 +241,14 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
   db_write(tmppath.c_str(), write_data);
 
  //Add this block to the list of data blocks
-  if(blocklist.size() == 0) {
+  if((blocklist.size() == 0) || (it == blocklist.end())) {
+    log_write("Pushing block %s onto end of blocklist\n", counter.c_str());
     blocklist.push_back(counter);
    }
   else {
-   blocklist.insert(it, counter);
+  // blocklist.insert(it, counter);
+  log_write("Replacing block %s with block %s\n", it->c_str(), counter.c_str());
+  (*it) = counter;
   } 
 
  //Re-using tmppath
@@ -272,14 +275,14 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
  //Update stbuf
   the_time = time(NULL);
   stbuf.st_mtime = the_time;
-  stbuf.st_size = write_data.size() + stbuf.st_size;
+  stbuf.st_size = size + stbuf.st_size;
 
   conv_toByteString(oss, reinterpret_cast<const unsigned char*>(&stbuf), sizeof(stbuf));
 
   db_delete(metapath.c_str());
   db_write(metapath.c_str(), oss.str());
 
-  return write_data.size();
+  return size;
 }
 
 static int fdb_mkdir(const char *path, mode_t mode) {
@@ -389,7 +392,7 @@ static int fdb_create(const char *path, mode_t mode, fuse_file_info *fi) {
   log_write("Entering create for %s\n", path);
   stbuf.st_mode = S_IFREG | mode;
   stbuf.st_nlink = 1;
-  stbuf.st_size = 2;
+  stbuf.st_size = 0;
   stbuf.st_atime = the_time;
   stbuf.st_mtime = the_time;
   stbuf.st_ctime = the_time;
@@ -426,7 +429,7 @@ static int fdb_read(const char *path, char *buffer, size_t length, off_t offset,
 
    it = blocklist.begin();
    i = offset/BLOCKSIZE; 
-   while(j < (i - 1)) {
+   while((j < i ) && (it != blocklist.end())) {
     log_write("Advanced iter\n");
     ++it;
     j++;

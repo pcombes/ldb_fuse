@@ -1,5 +1,5 @@
 CC=gcc
-LEVELDB=/usr/local/src/leveldb
+LEVELDB=/home/dumb/src/leveldb
 INCLUDE += $(LEVELDB)/include
 LIBRARIES += $(LEVELDB)/out-shared
 LINK=-lleveldb -lfuse
