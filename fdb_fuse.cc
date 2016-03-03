@@ -178,6 +178,7 @@ static int get_blocklist(const char *path, list<string> *blocklist) {
   istringstream iss(readbuf);
 
   while(getline(iss, tmp, ',')) {
+   log_write("Adding block %s to blocklist %s\n", tmp.c_str(), path);
    blocklist->push_front(tmp);
   }
 
@@ -192,6 +193,7 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
   string tmppath = path;
   string metapath = path;
   string counter;
+  int j = 0;
 
   metapath = "#" + metapath;
   list<string> blocklist;
@@ -219,12 +221,18 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
  //Get the current list of blocks for the file 
   get_blocklist(path, &blocklist);
  
+ //  it = blocklist.begin();
+  // i = offset/BLOCKSIZE; 
+  // for(int j=0; j <= i; ++j) {
+  //  ++it;
+  // }
    it = blocklist.begin();
-   i = offset/BLOCKSIZE; 
-   for(int j=0; j <= i; ++j) {
+   i = offset/BLOCKSIZE;
+   while(j < (i - 1)) {
+    log_write("Advanced iter\n");
     ++it;
+    j++;
    }
-
   log_write("Writing %d bytes to %s with offset %d \n", size,tmppath.c_str(), offset);
  //Set tmppath to be the current value of the block counter with the data tag
   tmppath = counter;
@@ -244,6 +252,7 @@ static int fdb_write(const char *path, const char *buffer, size_t size, off_t of
   tmppath.clear(); 
   tmppath = path;
   tmppath = "^" + tmppath;
+
  //Convert blocklist into a string again
   newblocklist = blocklist.front();
   blocklist.pop_front();
@@ -417,7 +426,7 @@ static int fdb_read(const char *path, char *buffer, size_t length, off_t offset,
 
    it = blocklist.begin();
    i = offset/BLOCKSIZE; 
-   while(j < i) {
+   while(j < (i - 1)) {
     log_write("Advanced iter\n");
     ++it;
     j++;
